@@ -2,10 +2,11 @@ import numpy as np
 import time
 
 class Algorithm:
-    def __init__(self, popSize, errorGoal, maxIterations, mOrderList, bBits, cBits, mutPopPct, mutGenePct):
+    def __init__(self, popSize, initPopSize, errorGoal, maxIterations, mOrderList, bBits, cBits, mutPopPct, mutGenePct, pctClone):
         self.population = []
         self.popFitness = []
         self.popSize = popSize
+        self.initPopSize = initPopSize
         self.errorGoal = errorGoal
         self.maxIterations = maxIterations
         self.mOrderList = mOrderList
@@ -15,8 +16,10 @@ class Algorithm:
         self.mutPopPct = mutPopPct
         self.mutGenePct = mutGenePct
         self.dataset = []
+        self.pctClone = pctClone
 
     def execute(self):
+        # main function to execute algorithm
         counter = 0
         self.create_initial_pop()
         minError, minErrorIndex = self.evaluate_pop_fitness()
@@ -27,16 +30,17 @@ class Algorithm:
             print('Min Error: ' + str(minError))
             print('Min Error Index: ' + str(minErrorIndex))
             print('Best Genome: ' + str(self.population[minErrorIndex]))
-            self.baby_makin()
+            self.baby_makin(self.pctClone)
             minError, minErrorIndex = self.evaluate_pop_fitness()
             counter += 1
         bestGenome = self.population[minErrorIndex]
         return bestGenome, minError
 
     def create_initial_pop(self):
+        # generate an initial random population
         counterPop = 0
         newPop = []
-        while counterPop < self.popSize:
+        while counterPop < self.initPopSize:
             counterGenes = 0
             genome = ''
             while counterGenes < self.geneCount:
@@ -50,6 +54,7 @@ class Algorithm:
         return newPop
 
     def evaluate_pop_fitness(self):
+        # evaluate the fitness of the current population
         fitnessList = []
         for genome in self.population:
             avgError = self.run_commands(genome)
@@ -61,10 +66,11 @@ class Algorithm:
         minErrorIndex = fitnessList.index(minError)
         return minError, minErrorIndex
 
-    def calculate_mod_factors(self, bList, cList, xPos, yPos, vel, omega):
+    def calculate_mod_factors(self, bList, cList, xPos, yPos, vel, omega, dVel, dOmega):
+        # calculate the modification factors to be used for the current state
         mList = []
         aList = []
-        varList = [xPos, yPos, vel, omega, xPos, yPos, vel, omega]
+        varList = [xPos, yPos, vel, omega, dVel, dOmega, xPos, yPos, vel, omega, dVel, dOmega]
         counter1 = 0
         while counter1 < len(bList):
             aList.append(10**bList[counter1] * cList[counter1])
@@ -72,9 +78,8 @@ class Algorithm:
         counter2 = 0
         for order in self.mOrderList:
             counter3 = 0
-            countMax3 = order
             m = 0
-            while counter3 <= countMax3:
+            while counter3 <= order:
                 m += aList[0] * varList[counter2]**(order-counter3)
                 aList.pop(0)
                 counter3 += 1
@@ -83,6 +88,7 @@ class Algorithm:
         return mList
 
     def decode_genome(self, genome):
+        # convert genome from binary to decimal
         counterMain = 0
         counterInner = 0
         countMainMax = len(genome)
@@ -109,7 +115,7 @@ class Algorithm:
         bListScaled = []
         cListScaled = []
         for b in bList:
-            b = b - 2**(self.bBits-1) + 1
+            b = b - 2**(self.bBits-1)
             bListScaled.append(b)
         for c in cList:
             c = (c - 2**(self.cBits-1) + 0.5)/(2**(self.cBits-1) - 0.5)
@@ -129,12 +135,15 @@ class Algorithm:
         prevPosGT = [xPos, yPos]
         errorList = []
         timeReset = resetGap
+        prevCommand = self.dataset[0]
         for command in self.dataset:
             time = command[0] - timeInit
             timeStep = time - timePrev
             vel = command[1]
             omega = command[2]
-            mList = self.calculate_mod_factors(bList, cList, xPos, yPos, vel, omega)
+            dVel = command[1] - prevCommand[1]
+            dOmega = command[2] - prevCommand[2]
+            mList = self.calculate_mod_factors(bList, cList, xPos, yPos, vel, omega, dVel, dOmega)
             xPos, yPos, theta = self.motion_model(vel, omega, timeStep, [xPos, yPos, theta], mList)
             if prevPosGT != [command[4], command[5]]:
                 distError = ((command[4] - xPos)**2 + (command[5] - yPos)**2)**0.5
@@ -146,27 +155,37 @@ class Algorithm:
                 theta = command[6]
                 timeReset = time + resetGap
             timePrev = time
+            prevCommand = command
         avgError = np.nansum(errorList) / len(errorList)
         return avgError
 
-    def baby_makin(self):
+    def baby_makin(self, pctClone):
+        # create new generation
         newPop = []
-        counter = 0
-        maxFitness = max(self.popFitness)
-        maxFitnessIndex = self.popFitness.index(maxFitness)
-        bestGenome = self.population[maxFitnessIndex]
-        while counter < len(self.population) - 1:
+        counter1 = 0
+        population = self.population
+        fitness = self.popFitness
+        while counter1 < self.popSize * pctClone:
+            minFitness = min(fitness)
+            minFitnessIndex = fitness.index(minFitness)
+            bestGenome = population[minFitnessIndex]
+            newPop.append(bestGenome)
+            population.pop(minFitnessIndex)
+            fitness.pop(minFitnessIndex)
+            counter1 += 1
+        counter2 = 0
+        while counter2 < self.popSize * (1 - pctClone) + 1:
             parent1, parent2 = self.select_parents()
             splitPoint = np.random.randint(1, self.geneCount)
             newGenome = parent1[0:splitPoint] + parent2[splitPoint:len(parent2)]
             newPop.append(newGenome)
-            counter += 1
+            counter2 += 1
         self.population = newPop
         self.mutate_pop()
-        self.population.append(bestGenome)
         return newPop
 
     def select_parents(self):
+        # select parents for next generation based on weighting 
         selectionPop = self.population
         selectionFitness = self.popFitness
         totalFitness = 0
@@ -187,6 +206,7 @@ class Algorithm:
         return parent1, parent2
 
     def mutate_pop(self):
+        # mutate a portion of the population
         newPop = []
         for genome in self.population:
             randPop = np.random.rand()
@@ -207,14 +227,15 @@ class Algorithm:
         self.population = newPop
         return newPop
                 
-    def apply_mod_factors(self, vel, omega, xPos, yPos, mList):
-        vel += vel * ((mList[0] * mList[1]) + mList[2] + mList[3])
-        omega += omega * ((mList[4] * mList[5]) + mList[6] + mList[7])
+    def apply_mod_factors(self, vel, omega, mList):
+        # apply the modification factors to the current state
+        vel += vel * ((mList[0] * mList[1]) + mList[2] + mList[3] + mList[4] + mList[5])
+        omega += omega * ((mList[6] * mList[7] + mList[8] + mList[9] + mList[10] + mList[11]))
         return vel, omega
     
     def motion_model(self, vel, omega, timeStep, pos, mList):
         # this fucntion calculates the new position and orientation of the robot based on the previous location and oriantationa and the command sent to the robot
-        vel, omega = self.apply_mod_factors(vel, omega, pos[0], pos[1], mList)
+        vel, omega = self.apply_mod_factors(vel, omega, mList)
         x0 = pos[0]
         y0 = pos[1]
         theta = pos[2]
